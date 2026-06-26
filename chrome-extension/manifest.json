@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Douyin Archive Companion",
+  "version": "0.1.0",
+  "description": "将抖音用户主页添加到 Douyin Archive，并自动同步当前 Chrome 登录 Cookie。",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "alarms",
+    "cookies",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.douyin.com/*",
+    "http://127.0.0.1:32145/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "action": {
+    "default_title": "Douyin Archive",
+    "default_icon": "icon.png",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.douyin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

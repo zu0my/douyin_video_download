@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Douyin Archive</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark">DA</div>
+        <div>
+          <strong>Douyin Archive</strong>
+          <span>Chrome companion</span>
+        </div>
+        <span id="status-dot" class="status-dot" title="连接状态"></span>
+      </header>
+
+      <section class="panel">
+        <div class="section-heading">
+          <span>本地连接</span>
+          <span id="connection-label" class="tag">正在检查</span>
+        </div>
+        <p class="hint">固定连接到 127.0.0.1，不需要配对或登录。</p>
+        <div class="metric">
+          <span>最近同步</span>
+          <strong id="last-sync">尚未同步</strong>
+        </div>
+        <button id="sync-now" class="secondary">立即同步 Cookie</button>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <span>当前页面</span>
+          <span id="monitor-label" class="tag neutral">等待识别</span>
+        </div>
+        <strong id="page-user" class="page-user">请打开抖音用户主页</strong>
+        <button id="add-monitor" class="primary" disabled>添加监听</button>
+      </section>
+
+      <p id="message" class="message" aria-live="polite"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
