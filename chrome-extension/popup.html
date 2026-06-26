@@ -39,6 +39,16 @@
         <button id="add-monitor" class="primary" disabled>添加监听</button>
       </section>
 
+      <section class="panel">
+        <div class="section-heading">
+          <span>未同步队列</span>
+          <span id="queue-count" class="tag neutral">0 条</span>
+        </div>
+        <div id="pending-queue" class="queue-list" aria-live="polite">
+          <p class="queue-empty">暂无未同步监听</p>
+        </div>
+      </section>
+
       <p id="message" class="message" aria-live="polite"></p>
     </main>
     <script src="popup.js"></script>

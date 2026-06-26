@@ -1,6 +1,6 @@
 {
   "name": "douyin-video-download",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A Tauri desktop app for monitoring Douyin users and downloading videos.",
   "type": "module",
   "scripts": {

@@ -1,6 +1,6 @@
 [package]
 name = "douyin-video-download"
-version = "0.1.0"
+version = "1.0.1"
 description = "Douyin desktop monitor and video downloader"
 authors = ["you"]
 edition = "2021"

@@ -2,6 +2,7 @@ const HOST_ID = "douyin-archive-companion";
 let currentUrl = "";
 let pageContext = null;
 let renderTimer = null;
+let statusRequestId = 0;
 
 const observer = new MutationObserver(() => scheduleRender());
 observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -16,6 +17,14 @@ scheduleRender();
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "GET_PAGE_CONTEXT") {
     sendResponse({ ok: true, context: pageContext });
+  }
+  if (message?.type === "MONITOR_STATUS_CHANGED") {
+    applyExternalMonitorStatus(message);
+    sendResponse({ ok: true });
+  }
+  if (message?.type === "MONITOR_QUEUE_CHANGED") {
+    applyQueueStatus(message.pendingMonitors || []);
+    sendResponse({ ok: true });
   }
 });
 
@@ -41,18 +50,29 @@ async function render() {
 
   const host = existing || createButtonHost();
   const button = host.shadowRoot.querySelector("button");
-  setButtonState(button, "正在检查", true);
+  if (button.dataset.pageUrl !== target.url) {
+    button.dataset.pageUrl = target.url;
+    setButtonState(button, "添加监听", false);
+  }
+  const checkedUrl = target.url;
+  const requestId = ++statusRequestId;
   const status = await chrome.runtime.sendMessage({
     type: "GET_MONITOR_STATUS",
-    url: target.url,
+    url: checkedUrl,
   });
+  if (
+    requestId !== statusRequestId ||
+    pageContext?.pageUrl !== checkedUrl ||
+    button.dataset.pageUrl !== checkedUrl
+  ) {
+    return;
+  }
   if (status?.ok && status.monitored) {
     setButtonState(button, "已监听", true, "success");
-  } else if (status?.ok) {
+  } else if (status?.ok && status.pending) {
+    setButtonState(button, "已保存，待同步", true, "success");
+  } else if (status?.ok && button.dataset.state !== "adding") {
     setButtonState(button, "添加监听", false);
-  } else {
-    setButtonState(button, "连接桌面软件", false, "warning");
-    button.title = status?.error || "无法连接 Douyin Archive";
   }
 }
 
@@ -105,11 +125,16 @@ async function addCurrentMonitor(button) {
   const result = await chrome.runtime.sendMessage({
     type: "ADD_MONITOR",
     url: pageContext.pageUrl,
+    context: pageContext,
   });
   if (result?.ok) {
     setButtonState(
       button,
-      result.status === "already_exists" ? "已监听" : "添加成功",
+      result.status === "queued"
+        ? "已保存，待同步"
+        : result.status === "already_exists"
+          ? "已监听"
+          : "添加成功",
       true,
       "success",
     );
@@ -119,10 +144,57 @@ async function addCurrentMonitor(button) {
   button.title = result?.error || "添加监听失败";
 }
 
+function applyExternalMonitorStatus(message) {
+  if (!message?.url || pageContext?.pageUrl !== message.url) return;
+  const target = parseUserPage(location.href);
+  if (!target || target.url !== message.url) return;
+
+  statusRequestId += 1;
+  const host = document.getElementById(HOST_ID) || createButtonHost();
+  const button = host.shadowRoot.querySelector("button");
+  button.dataset.pageUrl = target.url;
+
+  if (message.status === "queued") {
+    setButtonState(button, "已保存，待同步", true, "success");
+    return;
+  }
+  if (message.status === "monitored") {
+    setButtonState(button, "已监听", true, "success");
+  }
+}
+
+function applyQueueStatus(pendingMonitors) {
+  if (!pageContext?.pageUrl) return;
+  const target = parseUserPage(location.href);
+  if (!target || target.url !== pageContext.pageUrl) return;
+
+  const host = document.getElementById(HOST_ID) || createButtonHost();
+  const button = host.shadowRoot.querySelector("button");
+  const pending = pendingMonitors.some((item) => item?.url === pageContext.pageUrl);
+  if (pending) {
+    statusRequestId += 1;
+    button.dataset.pageUrl = pageContext.pageUrl;
+    setButtonState(button, "已保存，待同步", true, "success");
+    return;
+  }
+  if (button.dataset.state === "pending") {
+    scheduleRender();
+  }
+}
+
 function setButtonState(button, text, disabled, tone = "") {
   button.textContent = text;
   button.disabled = disabled;
   button.dataset.tone = tone;
+  button.dataset.state =
+    text === "正在添加"
+      ? "adding"
+      : text === "已监听"
+        ? "monitored"
+        : text === "已保存，待同步"
+          ? "pending"
+          : "ready";
+  button.title = "";
 }
 
 function parseUserPage(value) {

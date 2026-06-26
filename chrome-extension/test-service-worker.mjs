@@ -4,10 +4,21 @@ import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-function createHarness({ refreshNeeded = false } = {}) {
+function createHarness({
+  refreshNeeded = false,
+  offline = false,
+  tabs = [
+    { id: 1, url: "https://www.douyin.com/user/MS4wLjABAAAA-user-a" },
+    { id: 2, url: "https://www.douyin.com/user/MS4wLjABAAAA-user-b" },
+    { id: 3, url: "https://example.com/" },
+  ],
+} = {}) {
   const storage = {};
   const requests = [];
+  const extensionMessages = [];
+  const tabMessages = [];
   let messageListener;
+  let desktopOffline = offline;
   const listeners = {};
   const event = (name) => ({
     addListener(listener) {
@@ -22,6 +33,22 @@ function createHarness({ refreshNeeded = false } = {}) {
         addListener(listener) {
           messageListener = listener;
         },
+      },
+      async sendMessage(message) {
+        extensionMessages.push(message);
+        return { ok: true };
+      },
+    },
+    tabs: {
+      async query(query = {}) {
+        if (Array.isArray(query.url)) {
+          return tabs.filter((tab) => String(tab.url).includes("douyin.com"));
+        }
+        return tabs;
+      },
+      async sendMessage(tabId, message) {
+        tabMessages.push({ tabId, message });
+        return { ok: true };
       },
     },
     alarms: {
@@ -61,6 +88,9 @@ function createHarness({ refreshNeeded = false } = {}) {
   };
 
   async function fetchMock(url, options = {}) {
+    if (desktopOffline) {
+      throw new TypeError("Failed to fetch");
+    }
     requests.push({ url: String(url), options });
     if (String(url).endsWith("/api/v1/status")) {
       return new Response(
@@ -85,6 +115,17 @@ function createHarness({ refreshNeeded = false } = {}) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (String(url).endsWith("/api/v1/monitors")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          status: "created",
+          monitorId: "monitor-1",
+          intervalMinutes: 30,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
     return new Response(JSON.stringify({ ok: true, monitored: false }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -97,12 +138,15 @@ function createHarness({ refreshNeeded = false } = {}) {
   );
   vm.runInNewContext(source, {
     chrome,
+    AbortController,
+    clearTimeout,
     console,
     crypto: { randomUUID },
     Date,
     fetch: fetchMock,
     Intl,
     Response,
+    setTimeout,
     URL,
   });
 
@@ -113,9 +157,14 @@ function createHarness({ refreshNeeded = false } = {}) {
   }
 
   return {
+    extensionMessages,
     requests,
     send,
+    setOffline(value) {
+      desktopOffline = value;
+    },
     storage,
+    tabMessages,
     async fireAlarm(name) {
       await listeners.alarm({ name });
     },
@@ -156,4 +205,149 @@ test("refreshes cookies after the desktop app requests a retry", async () => {
   assert.ok(
     harness.requests.some(({ url }) => url.endsWith("/api/v1/cookies/sync")),
   );
+});
+
+test("queues monitor requests when the desktop app is unavailable", async () => {
+  const harness = createHarness({ offline: true });
+  const result = await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user",
+    context: { pageUserName: "Alice" },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "queued");
+  assert.equal(harness.storage.pendingMonitors.length, 1);
+  assert.equal(
+    harness.storage.pendingMonitors[0].url,
+    "https://www.douyin.com/user/MS4wLjABAAAA-user",
+  );
+  assert.equal(harness.storage.pendingMonitors[0].pageUserName, "Alice");
+});
+
+test("flushes queued monitor requests after the desktop app reconnects", async () => {
+  const harness = createHarness({ offline: true });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user",
+  });
+
+  harness.setOffline(false);
+  await harness.fireAlarm("douyin-archive-refresh-poll");
+
+  const monitorRequest = harness.requests.find(({ url }) =>
+    url.endsWith("/api/v1/monitors"),
+  );
+  assert.ok(monitorRequest);
+  assert.equal(
+    JSON.parse(monitorRequest.options.body).url,
+    "https://www.douyin.com/user/MS4wLjABAAAA-user",
+  );
+  assert.equal(harness.storage.pendingMonitors.length, 0);
+});
+
+test("uses one shared pending monitor queue across multiple user pages", async () => {
+  const harness = createHarness({ offline: true });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-a",
+  });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-b",
+  });
+
+  let queued = await harness.send({ type: "GET_PENDING_MONITORS" });
+  assert.equal(queued.ok, true);
+  assert.equal(queued.pendingMonitors.length, 2);
+
+  harness.setOffline(false);
+  await harness.fireAlarm("douyin-archive-refresh-poll");
+
+  const monitorRequests = harness.requests.filter(({ url }) =>
+    url.endsWith("/api/v1/monitors"),
+  );
+  assert.equal(monitorRequests.length, 2);
+  queued = await harness.send({ type: "GET_PENDING_MONITORS" });
+  assert.equal(queued.pendingMonitors.length, 0);
+});
+
+test("broadcasts the same shared pending queue to every Douyin tab", async () => {
+  const harness = createHarness({ offline: true });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-a",
+  });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-b",
+  });
+
+  const latestMessagesByTab = new Map();
+  for (const item of harness.tabMessages) {
+    latestMessagesByTab.set(item.tabId, item.message);
+  }
+
+  assert.deepEqual([...latestMessagesByTab.keys()].sort(), [1, 2]);
+  for (const message of latestMessagesByTab.values()) {
+    assert.equal(message.type, "MONITOR_QUEUE_CHANGED");
+    assert.equal(message.pendingMonitors.length, 2);
+    assert.equal(
+      JSON.stringify(message.pendingMonitors.map((item) => item.url).sort()),
+      JSON.stringify([
+        "https://www.douyin.com/user/MS4wLjABAAAA-user-a",
+        "https://www.douyin.com/user/MS4wLjABAAAA-user-b",
+      ]),
+    );
+  }
+
+  harness.setOffline(false);
+  await harness.fireAlarm("douyin-archive-refresh-poll");
+
+  const finalMessagesByTab = new Map();
+  for (const item of harness.tabMessages) {
+    finalMessagesByTab.set(item.tabId, item.message);
+  }
+  for (const message of finalMessagesByTab.values()) {
+    assert.equal(message.type, "MONITOR_QUEUE_CHANGED");
+    assert.equal(message.pendingMonitors.length, 0);
+  }
+});
+
+test("removes one pending monitor from the shared queue", async () => {
+  const harness = createHarness({ offline: true });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-a",
+  });
+  await harness.send({
+    type: "ADD_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-b",
+  });
+
+  const removed = await harness.send({
+    type: "REMOVE_PENDING_MONITOR",
+    url: "https://www.douyin.com/user/MS4wLjABAAAA-user-a",
+  });
+  assert.equal(removed.ok, true);
+
+  const queued = await harness.send({ type: "GET_PENDING_MONITORS" });
+  assert.equal(queued.pendingMonitors.length, 1);
+  assert.equal(
+    queued.pendingMonitors[0].url,
+    "https://www.douyin.com/user/MS4wLjABAAAA-user-b",
+  );
+
+  const latestMessagesByTab = new Map();
+  for (const item of harness.tabMessages) {
+    latestMessagesByTab.set(item.tabId, item.message);
+  }
+  for (const message of latestMessagesByTab.values()) {
+    assert.equal(message.type, "MONITOR_QUEUE_CHANGED");
+    assert.equal(message.pendingMonitors.length, 1);
+    assert.equal(
+      message.pendingMonitors[0].url,
+      "https://www.douyin.com/user/MS4wLjABAAAA-user-b",
+    );
+  }
 });
