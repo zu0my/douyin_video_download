@@ -41,6 +41,28 @@ Configure signing only in the release environment:
 Keep the Windows WiX `upgradeCode` unchanged after the first public release;
 changing it makes Windows treat a new release as a different application.
 
+## Release flow
+
+Use the release script to bump versions and create the release tag:
+
+```bash
+pnpm release patch
+git push origin main --tags
+```
+
+The release script accepts `patch`, `minor`, or `major`. It uses `package.json`
+as the source version, synchronizes `package.json`, `src-tauri/Cargo.toml`,
+`src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and
+`chrome-extension/manifest.json`, runs verification, commits the version bump,
+and creates `v<version>`.
+
+Pushing the tag triggers the GitHub Actions workflow below. To build local
+artifacts without bumping versions or creating a tag, use:
+
+```bash
+pnpm run release:local
+```
+
 ## GitHub Actions
 
 `.github/workflows/build-desktop.yml` builds the following native artifacts

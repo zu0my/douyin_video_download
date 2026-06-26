@@ -35,12 +35,23 @@ generated file securely. Do not commit it.
 
 ```bash
 npm run extension:init-key
-npm run release
+pnpm release patch
+git push origin main --tags
 ```
 
-`npm run release` runs type checking and extension tests, builds the Windows
-Tauri installers, and packages the Chrome extension. The installer and
-extension artifacts are written beneath:
+`pnpm release patch` accepts `patch`, `minor`, or `major`. It bumps the shared
+version in the npm package, Rust crate, Tauri config, and Chrome extension
+manifest, then runs verification, creates a release commit, and tags it as
+`v<version>`. Pushing the tag starts the GitHub Actions release workflow, which
+builds the desktop installers and Chrome extension package.
+
+For a local package build without changing versions or creating a tag, run:
+
+```bash
+pnpm run release:local
+```
+
+Local installer and extension artifacts are written beneath:
 
 ```text
 src-tauri/target/release/bundle/
